@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: write  # <-- Nécessaire pour s'authentifier et pousser sur ghcr.io
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
