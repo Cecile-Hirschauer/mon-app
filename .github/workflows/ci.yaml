@@ -8,15 +8,12 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: plop-latest
+    runs-on: ubuntu-latest
     steps:
-      - name: Récupérer le code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Construire l'image
         run: docker build -t mon-app:ci .
-
-      - name: Lancer un conteneur et vérifier qu'il répond
+      - name: Vérifier que l'image répond
         run: |
           docker network create ci-net
           docker run -d --name db --network ci-net \
@@ -28,3 +25,29 @@ jobs:
           for i in $(seq 1 10); do curl --fail http://localhost:5000 && break; sleep 2; done
           docker rm -f ci-test db
           docker network rm ci-net
+
+  push-image:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connexion au registre GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${<!-- -->{ github.actor }}
+          password: ${<!-- -->{ secrets.GITHUB_TOKEN }}
+
+      - name: Build et push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${<!-- -->{ github.repository }}:latest
+            ghcr.io/${<!-- -->{ github.repository }}:${<!-- -->{ github.sha }}
