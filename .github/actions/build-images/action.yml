@@ -1,0 +1,31 @@
+name: "Build mon-app image"
+description: "Construit l'image Docker de mon-app et l'exporte en archive tar"
+
+inputs:
+  image-tag:
+    description: "Nom et tag de l'image Docker à construire"
+    required: false
+    default: "mon-app:ci"
+  tar-path:
+    description: "Chemin de destination du fichier tar exporté"
+    required: false
+    default: "mon-app.tar"
+  python-version:
+    description: "Version de Python à passer en build-arg"
+    required: false
+    default: "3.12-slim"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Construire l'image Docker
+      shell: bash
+      run: |
+        docker build \
+          --build-arg PYTHON_VERSION="${{ inputs.python-version }}" \
+          -t "${{ inputs.image-tag }}" .
+
+    - name: Exporter l'image au format tar
+      shell: bash
+      run: |
+        docker save "${{ inputs.image-tag }}" -o "${{ inputs.tar-path }}"

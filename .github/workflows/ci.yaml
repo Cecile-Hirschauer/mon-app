@@ -1,4 +1,4 @@
-name: CI & CD Matrix
+name: CI & CD
 
 on:
   push:
@@ -19,54 +19,32 @@ jobs:
         python-version: ["3.11-slim", "3.12-slim"]
 
     steps:
+      # Obligatoire : l'action composite locale n'existe sur le runner qu'après checkout
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Génère des tags spécifiques à chaque version testée
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
+      # Appel de l'action composite locale
+      - name: Build and export image via composite action
+        uses: ./.github/actions/build-image
         with:
-          images: ghcr.io/${{ github.repository }}
-          flavor: |
-            suffix=-py${{ matrix.python-version }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=short
+          image-tag: mon-app:${{ matrix.python-version }}
+          tar-path: /tmp/mon-app-${{ matrix.python-version }}.tar
+          python-version: ${{ matrix.python-version }}
 
-      # Build avec passage de l'argument de version et export tar
-      - name: Build image and export to tar
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          build-args: |
-            PYTHON_VERSION=${{ matrix.python-version }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=docker,dest=/tmp/image-${{ matrix.python-version }}.tar
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Test rapide : vérification que le conteneur démarre
+      # Test rapide d'exécution du conteneur
       - name: Test container startup
         run: |
-          docker load --input /tmp/image-${{ matrix.python-version }}.tar
-          PRIMARY_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
-          docker run --rm -d --name test-app "$PRIMARY_TAG"
+          docker run --rm -d --name test-app mon-app:${{ matrix.python-version }}
           sleep 3
           docker ps | grep test-app
           docker stop test-app
 
-      # Sauvegarde de l'artefact spécifique à la version
+      # Sauvegarde de l'artefact pour les jobs suivants (push, scan, tests...)
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@v4
         with:
           name: docker-image-${{ matrix.python-version }}
-          path: /tmp/image-${{ matrix.python-version }}.tar
+          path: /tmp/mon-app-${{ matrix.python-version }}.tar
           retention-days: 1
 
   push-image:
@@ -75,7 +53,6 @@ jobs:
     if: github.event_name != 'pull_request'
 
     steps:
-      # Télécharge tous les artefacts d'images générés par la matrix
       - name: Download all Docker image artifacts
         uses: actions/download-artifact@v4
         with:
@@ -83,7 +60,6 @@ jobs:
           path: /tmp/images
           merge-multiple: true
 
-      # Chargement de toutes les images exportées
       - name: Load images into Docker
         run: |
           for tar in /tmp/images/*.tar; do
@@ -92,7 +68,6 @@ jobs:
           done
           docker image ls -a
 
-      # Authentification GHCR
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -100,11 +75,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Push de tous les tags sur GHCR
-      - name: Push all Docker images to GHCR
+      - name: Tag and push to GHCR
         run: |
-          REPO_IMAGE="ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${REPO_IMAGE}" | while read -r tag; do
-            echo "Pushing $tag..."
-            docker push "$tag"
+          REPO_LOWER="ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          for py_ver in "3.11-slim" "3.12-slim"; do
+            docker tag mon-app:${py_ver} ${REPO_LOWER}:${py_ver}
+            docker push ${REPO_LOWER}:${py_ver}
           done
