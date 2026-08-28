@@ -1,4 +1,4 @@
-name: CI & Docker Build
+name: CI & CD
 
 on:
   push:
@@ -6,13 +6,12 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
-# Permissions requises pour s'authentifier et publier sur ghcr.io
 permissions:
   contents: read
   packages: write
 
 jobs:
-  build-and-push:
+  build-and-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,7 +21,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Extrait les métadonnées (tags, labels) et convertit automatiquement le nom en minuscules
       - name: Extract metadata for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -32,22 +30,60 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
 
+      # Build de l'image et export local au format tar
+      - name: Build image and export to tar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=docker,dest=/tmp/image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Sauvegarde de l'artefact pour le job suivant
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  push-image:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    # On n'exécute le push que lors d'un push réel (pas sur les Pull Requests)
+    if: github.event_name != 'pull_request'
+
+    steps:
+      # Téléchargement de l'archive tar produite par build-and-test
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      # Chargement de l'image dans le daemon Docker local
+      - name: Load image into Docker
+        run: |
+          docker load --input /tmp/image.tar
+          docker image ls -a
+
+      # Authentification à GHCR
       - name: Log in to GitHub Container Registry
-        # On ne se connecte que si c'est un push (pas nécessaire sur une simple PR externe)
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # Push de tous les tags associés à l'image
+      - name: Push Docker image to GHCR
+        run: |
+          # Extrait et pousse chaque tag généré pour ce dépôt
+          REPO_IMAGE="ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${REPO_IMAGE}" | while read -r tag; do
+            echo "Pushing $tag..."
+            docker push "$tag"
+          done
