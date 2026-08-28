@@ -20,7 +20,7 @@ jobs:
         run: |
           docker network create ci-net
           docker run -d --name db --network ci-net \
-            -e POSTGRES_DB=mabase -e POSTGRES_USER=app -e POSTGRES_PASSWORD=secret \
+            -e POSTGRES_DB=mabase -e POSTGRES_USER=app -e POSTGRES_PASSWORD=passecret \
             postgres:16
           docker run -d -p 5000:5000 --name ci-test --network ci-net \
             -e POSTGRES_DB=mabase -e POSTGRES_USER=app -e POSTGRES_PASSWORD=secret \
